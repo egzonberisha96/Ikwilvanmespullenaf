@@ -23,7 +23,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.454.0",
-    "mollie-api-node": "^3.7.0",
+    "@mollie/api-client": "^4.5.0",
     "next": "15.0.3",
     "next-auth": "^4.24.10",
     "nodemailer": "^6.9.16",
