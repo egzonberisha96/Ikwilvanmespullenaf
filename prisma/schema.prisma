@@ -1,0 +1,487 @@
+// ==========================================================================
+// ikwilvanmespullenaf.nl - Database schema
+// ==========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------------------------------------------
+// ENUMS
+// --------------------------------------------------------------------------
+
+enum Role {
+  VISITOR
+  CUSTOMER
+  PARTNER
+  ADMIN
+}
+
+enum RequestType {
+  LOSSE_SPULLEN
+  COMPLETE_INBOEDEL
+  WONINGONTRUIMING
+  BEDRIJFSINVENTARIS
+  BEDRIJFSONTRUIMING
+}
+
+enum RequestStatus {
+  NIEUW
+  IN_BEHANDELING
+  BIEDINGEN_ONTVANGEN
+  GEGUND
+  AFGEROND
+  GEANNULEERD
+}
+
+enum BidStatus {
+  OPEN
+  GEACCEPTEERD
+  AFGEWEZEN
+  INGETROKKEN
+}
+
+enum PartnerType {
+  OPKOPER
+  ONTRUIMINGSBEDRIJF
+  KRINGLOOPWINKEL
+  TRANSPORTBEDRIJF
+}
+
+enum SubscriptionPlan {
+  GRATIS
+  BASIS
+  PRO
+  UNLIMITED
+}
+
+enum CommissionType {
+  VAST_BEDRAG
+  PERCENTAGE
+  ABONNEMENT
+}
+
+enum InvoiceStatus {
+  CONCEPT
+  VERZONDEN
+  BETAALD
+  ACHTERSTALLIG
+  GEANNULEERD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  CANCELED
+  EXPIRED
+}
+
+enum PaymentType {
+  LEAD_FEE
+  COMMISSIE
+  ABONNEMENT
+}
+
+enum NotificationType {
+  NIEUWE_AANVRAAG
+  NIEUW_BOD
+  BOD_GEACCEPTEERD
+  NIEUWE_PARTNER
+  WACHTWOORD_VERGETEN
+  SYSTEEM
+}
+
+// --------------------------------------------------------------------------
+// AUTH (NextAuth compatible)
+// --------------------------------------------------------------------------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// --------------------------------------------------------------------------
+// USERS
+// --------------------------------------------------------------------------
+
+model User {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  emailVerified  DateTime?
+  passwordHash   String?
+  phone          String?
+  image          String?
+  role           Role      @default(CUSTOMER)
+
+  // Adres
+  postcode String?
+  city     String?
+  street   String?
+  houseNumber String?
+
+  resetToken       String?
+  resetTokenExpiry DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  requests      Request[]
+  partner       Partner?
+  reviews       Review[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+// --------------------------------------------------------------------------
+// PARTNERS
+// --------------------------------------------------------------------------
+
+model Partner {
+  id          String      @id @default(cuid())
+  userId      String      @unique
+  companyName String
+  kvkNumber   String?
+  btwNumber   String?
+  type        PartnerType
+  description String?     @db.Text
+  logoUrl     String?
+  website     String?
+
+  // Werkgebied
+  workRegions    String[] // lijst van postcodegebieden / plaatsnamen
+  workRadiusKm   Int?     @default(25)
+  baseCity       String?
+  basePostcode   String?
+
+  // Categorieën waar partner interesse in heeft
+  categories PartnerCategory[]
+
+  // Abonnement / commissie
+  subscriptionPlan SubscriptionPlan @default(GRATIS)
+  commissionType   CommissionType   @default(VAST_BEDRAG)
+  commissionValue  Decimal          @default(0) @db.Decimal(10, 2)
+
+  isApproved Boolean  @default(false)
+  isActive   Boolean  @default(true)
+  rating     Decimal? @db.Decimal(2, 1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bids      Bid[]
+  reviews   Review[]
+  invoices  Invoice[]
+  payments  Payment[]
+
+  @@map("partners")
+}
+
+model PartnerCategory {
+  id        String   @id @default(cuid())
+  partnerId String
+  categoryId String
+
+  partner  Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, categoryId])
+  @@map("partner_categories")
+}
+
+// --------------------------------------------------------------------------
+// CATEGORIES
+// --------------------------------------------------------------------------
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  type        RequestType
+  description String?
+  icon        String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+
+  requests         Request[]
+  partnerCategories PartnerCategory[]
+
+  @@map("categories")
+}
+
+// --------------------------------------------------------------------------
+// REQUESTS (aanvragen)
+// --------------------------------------------------------------------------
+
+model Request {
+  id            String        @id @default(cuid())
+  requestNumber String        @unique // bv. IWMA-2026-000123
+
+  type       RequestType
+  categoryId String?
+  category   Category?     @relation(fields: [categoryId], references: [id])
+
+  description String @db.Text
+
+  // Adres
+  postcode    String
+  city        String
+  street      String?
+  houseNumber String?
+
+  // Contact
+  contactName  String
+  contactEmail String
+  contactPhone String
+
+  // Optioneel gekoppeld aan account
+  userId String?
+  user   User?  @relation(fields: [userId], references: [id])
+
+  status RequestStatus @default(NIEUW)
+
+  photos Photo[]
+  bids   Bid[]
+  review Review?
+
+  acceptedBidId String? @unique
+  acceptedBid   Bid?    @relation("AcceptedBid", fields: [acceptedBidId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postcode])
+  @@index([status])
+  @@map("requests")
+}
+
+model Photo {
+  id        String   @id @default(cuid())
+  requestId String
+  url       String
+  key       String? // uploadthing file key
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  request Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@map("photos")
+}
+
+// --------------------------------------------------------------------------
+// BIDS (biedingen / offertes)
+// --------------------------------------------------------------------------
+
+model Bid {
+  id        String    @id @default(cuid())
+  requestId String
+  partnerId String
+
+  amount  Decimal   @db.Decimal(10, 2) // positief = partner betaalt klant, kan 0 zijn bij gratis ophalen
+  message String?   @db.Text
+  status  BidStatus @default(OPEN)
+
+  isQuote Boolean @default(false) // true = offerte (bv. ontruiming), false = bod (bv. opkoop)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  request        Request   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  partner        Partner   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  acceptedFor    Request?  @relation("AcceptedBid")
+  payments       Payment[]
+
+  @@unique([requestId, partnerId])
+  @@map("bids")
+}
+
+// --------------------------------------------------------------------------
+// REVIEWS
+// --------------------------------------------------------------------------
+
+model Review {
+  id        String   @id @default(cuid())
+  requestId String   @unique
+  userId    String
+  partnerId String
+
+  rating  Int // 1-5
+  comment String? @db.Text
+
+  isApproved Boolean @default(false)
+  isVisible  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  request Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
+}
+
+// --------------------------------------------------------------------------
+// NOTIFICATIONS
+// --------------------------------------------------------------------------
+
+model Notification {
+  id      String            @id @default(cuid())
+  userId  String
+  type    NotificationType
+  title   String
+  message String            @db.Text
+  link    String?
+  isRead  Boolean           @default(false)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+// --------------------------------------------------------------------------
+// INVOICES & PAYMENTS
+// --------------------------------------------------------------------------
+
+model Invoice {
+  id            String        @id @default(cuid())
+  invoiceNumber String        @unique
+  partnerId     String
+
+  amount    Decimal       @db.Decimal(10, 2)
+  vatAmount Decimal       @db.Decimal(10, 2) @default(0)
+  status    InvoiceStatus @default(CONCEPT)
+
+  periodStart DateTime?
+  periodEnd   DateTime?
+  dueDate     DateTime?
+  paidAt      DateTime?
+
+  pdfUrl String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  partner  Partner   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@map("invoices")
+}
+
+model Payment {
+  id        String        @id @default(cuid())
+  molliePaymentId String? @unique
+  partnerId String
+  invoiceId String?
+  bidId     String?
+
+  type   PaymentType
+  amount Decimal       @db.Decimal(10, 2)
+  status PaymentStatus @default(PENDING)
+
+  description String?
+  checkoutUrl String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  partner Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  bid     Bid?     @relation(fields: [bidId], references: [id])
+
+  @@map("payments")
+}
+
+// --------------------------------------------------------------------------
+// SETTINGS (platform-brede, admin-instelbare configuratie)
+// --------------------------------------------------------------------------
+
+model Setting {
+  key   String @id
+  value String @db.Text
+
+  @@map("settings")
+}
+
+// --------------------------------------------------------------------------
+// BLOG / SEO
+// --------------------------------------------------------------------------
+
+model BlogPost {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  excerpt     String?
+  content     String   @db.Text
+  coverImage  String?
+  metaTitle   String?
+  metaDescription String?
+  isPublished Boolean  @default(false)
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("blog_posts")
+}
+
+model CityLandingPage {
+  id              String @id @default(cuid())
+  city            String @unique
+  slug            String @unique
+  metaTitle       String?
+  metaDescription String?
+  content         String? @db.Text
+  isPublished     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("city_landing_pages")
+}
